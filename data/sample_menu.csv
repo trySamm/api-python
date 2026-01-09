@@ -1,0 +1,18 @@
+name,description,price_cents,category,is_active
+Margherita Pizza,Fresh mozzarella tomato sauce and basil,1499,Pizza,true
+Pepperoni Pizza,Classic pepperoni with mozzarella cheese,1699,Pizza,true
+Meat Lovers Pizza,Pepperoni sausage bacon and ham,1899,Pizza,true
+Vegetable Pizza,Bell peppers onions mushrooms olives and tomatoes,1699,Pizza,true
+Spaghetti Bolognese,Spaghetti with rich meat sauce,1599,Pasta,true
+Fettuccine Alfredo,Fettuccine in creamy parmesan sauce,1499,Pasta,true
+Chicken Parmesan,Breaded chicken breast with marinara and melted mozzarella,1899,Pasta,true
+Lasagna,Layers of pasta meat sauce ricotta and mozzarella,1699,Pasta,true
+Caesar Salad,Romaine parmesan croutons caesar dressing,1099,Salads,true
+House Salad,Mixed greens tomatoes cucumbers red onion,899,Salads,true
+Bruschetta,Grilled bread with fresh tomatoes garlic and basil,899,Appetizers,true
+Calamari Fritti,Crispy fried calamari with marinara sauce,1299,Appetizers,true
+Tiramisu,Classic Italian coffee-flavored dessert,899,Desserts,true
+Cannoli,Crispy shells filled with sweet ricotta cream,699,Desserts,true
+Soft Drink,Coca-Cola Diet Coke Sprite or Fanta,299,Drinks,true
+Coffee,Regular or decaf,299,Drinks,true
+
