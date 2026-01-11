@@ -102,6 +102,60 @@ async def create_reservation(
     return reservation
 
 
+@router.get("/availability/check", response_model=AvailabilityResponse)
+async def check_availability(
+    tenant_id: UUID,
+    date: str,
+    time: str,
+    party_size: int,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Check reservation availability"""
+    await verify_tenant_access(tenant_id, current_user)
+
+    # Parse date and time
+    try:
+        requested_datetime = datetime.strptime(f"{date} {time}", "%Y-%m-%d %H:%M")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date or time format")
+
+    # Check existing reservations for that time slot
+    slot_start = requested_datetime - timedelta(minutes=30)
+    slot_end = requested_datetime + timedelta(minutes=30)
+
+    result = await db.execute(
+        select(func.count(Reservation.id)).where(
+            Reservation.tenant_id == tenant_id,
+            Reservation.status.in_(["pending", "confirmed"]),
+            Reservation.reservation_datetime.between(slot_start, slot_end),
+        )
+    )
+    existing_count = result.scalar()
+
+    # Simple availability logic (max 10 reservations per slot)
+    max_reservations = 10
+    available = existing_count < max_reservations
+
+    # Generate alternative slots if not available
+    slots = []
+    for hour_offset in range(-2, 3):
+        for minute_offset in [0, 30]:
+            alt_time = requested_datetime + timedelta(hours=hour_offset, minutes=minute_offset)
+            if alt_time > datetime.now():
+                slots.append(AvailabilitySlot(
+                    time=alt_time.strftime("%H:%M"),
+                    available=True,  # Simplified
+                ))
+
+    return AvailabilityResponse(
+        date=date,
+        party_size=party_size,
+        available=available,
+        slots=slots,
+    )
+
+
 @router.get("/{reservation_id}", response_model=ReservationResponse)
 async def get_reservation(
     tenant_id: UUID,
@@ -111,7 +165,7 @@ async def get_reservation(
 ):
     """Get reservation details"""
     await verify_tenant_access(tenant_id, current_user)
-    
+
     result = await db.execute(
         select(Reservation).where(
             Reservation.id == reservation_id,
@@ -119,10 +173,10 @@ async def get_reservation(
         )
     )
     reservation = result.scalar_one_or_none()
-    
+
     if not reservation:
         raise HTTPException(status_code=404, detail="Reservation not found")
-    
+
     return reservation
 
 
@@ -136,7 +190,7 @@ async def update_reservation(
 ):
     """Update reservation"""
     await verify_tenant_access(tenant_id, current_user)
-    
+
     result = await db.execute(
         select(Reservation).where(
             Reservation.id == reservation_id,
@@ -144,16 +198,16 @@ async def update_reservation(
         )
     )
     reservation = result.scalar_one_or_none()
-    
+
     if not reservation:
         raise HTTPException(status_code=404, detail="Reservation not found")
-    
+
     for field, value in reservation_data.model_dump(exclude_unset=True).items():
         setattr(reservation, field, value)
-    
+
     await db.commit()
     await db.refresh(reservation)
-    
+
     return reservation
 
 
@@ -166,7 +220,7 @@ async def cancel_reservation(
 ):
     """Cancel a reservation"""
     await verify_tenant_access(tenant_id, current_user)
-    
+
     result = await db.execute(
         select(Reservation).where(
             Reservation.id == reservation_id,
@@ -174,64 +228,10 @@ async def cancel_reservation(
         )
     )
     reservation = result.scalar_one_or_none()
-    
+
     if not reservation:
         raise HTTPException(status_code=404, detail="Reservation not found")
-    
+
     reservation.status = "cancelled"
     await db.commit()
-
-
-@router.get("/availability/check", response_model=AvailabilityResponse)
-async def check_availability(
-    tenant_id: UUID,
-    date: str,
-    time: str,
-    party_size: int,
-    current_user: User = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """Check reservation availability"""
-    await verify_tenant_access(tenant_id, current_user)
-    
-    # Parse date and time
-    try:
-        requested_datetime = datetime.strptime(f"{date} {time}", "%Y-%m-%d %H:%M")
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid date or time format")
-    
-    # Check existing reservations for that time slot
-    slot_start = requested_datetime - timedelta(minutes=30)
-    slot_end = requested_datetime + timedelta(minutes=30)
-    
-    result = await db.execute(
-        select(func.count(Reservation.id)).where(
-            Reservation.tenant_id == tenant_id,
-            Reservation.status.in_(["pending", "confirmed"]),
-            Reservation.reservation_datetime.between(slot_start, slot_end),
-        )
-    )
-    existing_count = result.scalar()
-    
-    # Simple availability logic (max 10 reservations per slot)
-    max_reservations = 10
-    available = existing_count < max_reservations
-    
-    # Generate alternative slots if not available
-    slots = []
-    for hour_offset in range(-2, 3):
-        for minute_offset in [0, 30]:
-            alt_time = requested_datetime + timedelta(hours=hour_offset, minutes=minute_offset)
-            if alt_time > datetime.now():
-                slots.append(AvailabilitySlot(
-                    time=alt_time.strftime("%H:%M"),
-                    available=True,  # Simplified
-                ))
-    
-    return AvailabilityResponse(
-        date=date,
-        party_size=party_size,
-        available=available,
-        slots=slots,
-    )
 

@@ -90,6 +90,83 @@ async def create_menu_item(
     return result.scalar_one()
 
 
+@router.get("/search", response_model=MenuSearchResult)
+async def search_menu(
+    tenant_id: UUID,
+    query: str = Query(..., min_length=1),
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Search menu items by name or description"""
+    await verify_tenant_access(tenant_id, current_user)
+
+    search_term = f"%{query.lower()}%"
+
+    result = await db.execute(
+        select(MenuItem)
+        .where(
+            MenuItem.tenant_id == tenant_id,
+            MenuItem.is_active == True,
+            or_(
+                MenuItem.name.ilike(search_term),
+                MenuItem.description.ilike(search_term),
+                MenuItem.category.ilike(search_term),
+            ),
+        )
+        .options(selectinload(MenuItem.modifiers))
+        .limit(20)
+    )
+    items = result.scalars().all()
+
+    return MenuSearchResult(items=items, total=len(items))
+
+
+@router.post("/import_csv")
+async def import_menu_from_csv(
+    tenant_id: UUID,
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Import menu items from CSV file"""
+    await verify_tenant_access(tenant_id, current_user)
+
+    if not current_user.has_permission(UserRole.RESTAURANT_ADMIN):
+        raise HTTPException(status_code=403, detail="Insufficient permissions")
+
+    if not file.filename.endswith(".csv"):
+        raise HTTPException(status_code=400, detail="File must be a CSV")
+
+    content = await file.read()
+    decoded = content.decode("utf-8")
+    reader = csv.DictReader(io.StringIO(decoded))
+
+    items_created = 0
+    errors = []
+
+    for row_num, row in enumerate(reader, start=2):
+        try:
+            item = MenuItem(
+                tenant_id=tenant_id,
+                name=row["name"],
+                description=row.get("description"),
+                price_cents=int(row["price_cents"]),
+                category=row.get("category"),
+                is_active=row.get("is_active", "true").lower() == "true",
+            )
+            db.add(item)
+            items_created += 1
+        except Exception as e:
+            errors.append(f"Row {row_num}: {str(e)}")
+
+    await db.commit()
+
+    return {
+        "items_created": items_created,
+        "errors": errors,
+    }
+
+
 @router.get("/{item_id}", response_model=MenuItemResponse)
 async def get_menu_item(
     tenant_id: UUID,
@@ -99,17 +176,17 @@ async def get_menu_item(
 ):
     """Get a specific menu item"""
     await verify_tenant_access(tenant_id, current_user)
-    
+
     result = await db.execute(
         select(MenuItem)
         .where(MenuItem.id == item_id, MenuItem.tenant_id == tenant_id)
         .options(selectinload(MenuItem.modifiers))
     )
     item = result.scalar_one_or_none()
-    
+
     if not item:
         raise HTTPException(status_code=404, detail="Menu item not found")
-    
+
     return item
 
 
@@ -123,24 +200,24 @@ async def update_menu_item(
 ):
     """Update a menu item"""
     await verify_tenant_access(tenant_id, current_user)
-    
+
     if not current_user.has_permission(UserRole.RESTAURANT_ADMIN):
         raise HTTPException(status_code=403, detail="Insufficient permissions")
-    
+
     result = await db.execute(
         select(MenuItem)
         .where(MenuItem.id == item_id, MenuItem.tenant_id == tenant_id)
     )
     item = result.scalar_one_or_none()
-    
+
     if not item:
         raise HTTPException(status_code=404, detail="Menu item not found")
-    
+
     for field, value in item_data.model_dump(exclude_unset=True).items():
         setattr(item, field, value)
-    
+
     await db.commit()
-    
+
     # Reload with modifiers
     result = await db.execute(
         select(MenuItem)
@@ -159,96 +236,19 @@ async def delete_menu_item(
 ):
     """Delete a menu item (soft delete)"""
     await verify_tenant_access(tenant_id, current_user)
-    
+
     if not current_user.has_permission(UserRole.RESTAURANT_ADMIN):
         raise HTTPException(status_code=403, detail="Insufficient permissions")
-    
+
     result = await db.execute(
         select(MenuItem)
         .where(MenuItem.id == item_id, MenuItem.tenant_id == tenant_id)
     )
     item = result.scalar_one_or_none()
-    
+
     if not item:
         raise HTTPException(status_code=404, detail="Menu item not found")
-    
+
     item.is_active = False
     await db.commit()
-
-
-@router.post("/import_csv")
-async def import_menu_from_csv(
-    tenant_id: UUID,
-    file: UploadFile = File(...),
-    current_user: User = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """Import menu items from CSV file"""
-    await verify_tenant_access(tenant_id, current_user)
-    
-    if not current_user.has_permission(UserRole.RESTAURANT_ADMIN):
-        raise HTTPException(status_code=403, detail="Insufficient permissions")
-    
-    if not file.filename.endswith(".csv"):
-        raise HTTPException(status_code=400, detail="File must be a CSV")
-    
-    content = await file.read()
-    decoded = content.decode("utf-8")
-    reader = csv.DictReader(io.StringIO(decoded))
-    
-    items_created = 0
-    errors = []
-    
-    for row_num, row in enumerate(reader, start=2):
-        try:
-            item = MenuItem(
-                tenant_id=tenant_id,
-                name=row["name"],
-                description=row.get("description"),
-                price_cents=int(row["price_cents"]),
-                category=row.get("category"),
-                is_active=row.get("is_active", "true").lower() == "true",
-            )
-            db.add(item)
-            items_created += 1
-        except Exception as e:
-            errors.append(f"Row {row_num}: {str(e)}")
-    
-    await db.commit()
-    
-    return {
-        "items_created": items_created,
-        "errors": errors,
-    }
-
-
-@router.get("/search", response_model=MenuSearchResult)
-async def search_menu(
-    tenant_id: UUID,
-    query: str = Query(..., min_length=1),
-    current_user: User = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """Search menu items by name or description"""
-    await verify_tenant_access(tenant_id, current_user)
-    
-    search_term = f"%{query.lower()}%"
-    
-    result = await db.execute(
-        select(MenuItem)
-        .where(
-            MenuItem.tenant_id == tenant_id,
-            MenuItem.is_active == True,
-            or_(
-                MenuItem.name.ilike(search_term),
-                MenuItem.description.ilike(search_term),
-                MenuItem.category.ilike(search_term),
-            ),
-        )
-        .options(selectinload(MenuItem.modifiers))
-        .limit(20)
-    )
-    items = result.scalars().all()
-    
-    return MenuSearchResult(items=items, total=len(items))
 
